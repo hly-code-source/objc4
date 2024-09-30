@@ -44,6 +44,8 @@ namespace detail {
 
 // We extend a pair to allow users to override the bucket type with their own
 // implementation without requiring two members.
+///集成标准pair实现键值对
+/// 主要用来填充bucket这样的一个对象
 template <typename KeyT, typename ValueT>
 struct DenseMapPair : public std::pair<KeyT, ValueT> {
 
@@ -52,14 +54,20 @@ struct DenseMapPair : public std::pair<KeyT, ValueT> {
   // NOTE: This default constructor is declared with '{}' rather than
   //       '= default' to work around a separate bug in clang-3.8. This can
   //       also go when we switch to inheriting constructors.
+//     所有的构造函数
+//    为什么需要这么多构造函数？
   DenseMapPair() {}
 
+//    接受常量引用：
   DenseMapPair(const KeyT &Key, const ValueT &Value)
       : std::pair<KeyT, ValueT>(Key, Value) {}
-
+// 接受右值引用
+//    std::move 这个又是什么？ 这个和内存有关的，这个我们要去研究婴喜爱
   DenseMapPair(KeyT &&Key, ValueT &&Value)
       : std::pair<KeyT, ValueT>(std::move(Key), std::move(Value)) {}
 
+//    可转换类型的模板构造函数
+//    也就是这个奖pair拆分出来了key、value 下面一个是作为整体
   template <typename AltKeyT, typename AltValueT>
   DenseMapPair(AltKeyT &&AltKey, AltValueT &&AltValue,
                typename std::enable_if<
@@ -68,12 +76,18 @@ struct DenseMapPair : public std::pair<KeyT, ValueT> {
       : std::pair<KeyT, ValueT>(std::forward<AltKeyT>(AltKey),
                                 std::forward<AltValueT>(AltValue)) {}
 
+//    接受其他对的构造函数：
+//   AltPairT &&AltPair 两个&& 是什么意思？
+//   typename std::enable_if<std::is_convertible<AltPairT, std::pair<KeyT, ValueT>>::value>::type * = 0)
+//  std::pair<KeyT, ValueT>(std::forward<AltPairT>(AltPair)) 继承的这个是什么意思？
+// enable_if？ 是什么？ is_convertible 是什么？
   template <typename AltPairT>
   DenseMapPair(AltPairT &&AltPair,
                typename std::enable_if<std::is_convertible<
                    AltPairT, std::pair<KeyT, ValueT>>::value>::type * = 0)
       : std::pair<KeyT, ValueT>(std::forward<AltPairT>(AltPair)) {}
 
+//    实现pari中的first和second的方法
   KeyT &getFirst() { return std::pair<KeyT, ValueT>::first; }
   const KeyT &getFirst() const { return std::pair<KeyT, ValueT>::first; }
   ValueT &getSecond() { return std::pair<KeyT, ValueT>::second; }
@@ -82,6 +96,7 @@ struct DenseMapPair : public std::pair<KeyT, ValueT> {
 
 } // end namespace detail
 
+// 声明
 template <
     typename KeyT, typename ValueT,
     typename ValueInfoT = DenseMapValueInfo<ValueT>,
@@ -97,6 +112,7 @@ class DenseMapIterator;
 //   true refcount decreases to 1: this makes any future retain faster.
 // For memory size, we allow rehashes and table insertions to 
 //   remove a zero value as if it were a tombstone.
+// 定义了denseMap的基础类，要实心的是基础的功能
 template <typename DerivedT, typename KeyT, typename ValueT,
           typename ValueInfoT, typename KeyInfoT, typename BucketT>
 class DenseMapBase {
@@ -109,10 +125,12 @@ public:
   using mapped_type = ValueT;
   using value_type = BucketT;
 
+//     常见的两个： 迭代器 + 常量迭代器
   using iterator = DenseMapIterator<KeyT, ValueT, ValueInfoT, KeyInfoT, BucketT>;
   using const_iterator =
       DenseMapIterator<KeyT, ValueT, ValueInfoT, KeyInfoT, BucketT, true>;
 
+//     迭代器： begin() end() 或者还有next
   inline iterator begin() {
     // When the map is empty, avoid the overhead of advancing/retreating past
     // empty buckets.
@@ -131,20 +149,23 @@ public:
   inline const_iterator end() const {
     return makeConstIterator(getBucketsEnd(), getBucketsEnd(), true);
   }
-
+    
+// 是否为空
   bool empty() const {
     return getNumEntries() == 0;
   }
+//     数量
   unsigned size() const { return getNumEntries(); }
 
   /// Grow the densemap so that it can contain at least \p NumEntries items
   /// before resizing again.
+//   确保哈希表至少可以容纳指定数量的元素，必要时进行扩容。
   void reserve(size_type NumEntries) {
     auto NumBuckets = getMinBucketToReserveForEntries(NumEntries);
     if (NumBuckets > getNumBuckets())
       grow(NumBuckets);
   }
-
+//清空哈希表中的所有元素。
   void clear() {
     if (getNumEntries() == 0 && getNumTombstones() == 0) return;
 
@@ -179,11 +200,14 @@ public:
   }
 
   /// Return 1 if the specified key is in the map, 0 otherwise.
+//   返回数量，因为没有重复，有就返回1，没有就返回0个
   size_type count(const_arg_type_t<KeyT> Val) const {
     const BucketT *TheBucket;
     return LookupBucketFor(Val, TheBucket) ? 1 : 0;
   }
 
+//     查找 —— 因为需要办理，变和迭代器有关的； 我们常用的可能是常量迭代器来查找
+//    查找一个键，如果找到则返回指向该键值对的迭代器，否则返回end()迭代器。
   iterator find(const_arg_type_t<KeyT> Val) {
     BucketT *TheBucket;
     if (LookupBucketFor(Val, TheBucket))
@@ -219,6 +243,7 @@ public:
 
   /// lookup - Return the entry for the specified key, or a default
   /// constructed value if no such entry exists.
+//    /  查找值
   ValueT lookup(const_arg_type_t<KeyT> Val) const {
     const BucketT *TheBucket;
     if (LookupBucketFor(Val, TheBucket))
@@ -229,6 +254,7 @@ public:
   // Inserts key,value pair into the map if the key isn't already in the map.
   // If the key is already in the map, it returns false and doesn't update the
   // value.
+//     插入
   std::pair<iterator, bool> insert(const std::pair<KeyT, ValueT> &KV) {
     return try_emplace(KV.first, KV.second);
   }
@@ -243,6 +269,7 @@ public:
   // Inserts key,value pair into the map if the key isn't already in the map.
   // The value is constructed in-place if the key is not in the map, otherwise
   // it is not moved.
+//    插入有关的内容
   template <typename... Ts>
   std::pair<iterator, bool> try_emplace(KeyT &&Key, Ts &&... Args) {
     BucketT *TheBucket;
@@ -308,6 +335,7 @@ public:
 
   // Clear if empty.
   // Shrink if at least 15/16 empty and larger than MIN_COMPACT.
+//    如果哈希表为空，则清空；如果哈希表的填充率低于一定阈值，则缩容
   void compact() {
     if (getNumEntries() == 0) {
       shrink_and_clear();
@@ -319,6 +347,7 @@ public:
     }
   }
 
+//     删除一个键值对。如果键不存在，则返回false
   bool erase(const KeyT &Val) {
     BucketT *TheBucket;
     if (!LookupBucketFor(Val, TheBucket))
@@ -340,6 +369,7 @@ public:
     compact();
   }
 
+//     查找并构建
   value_type& FindAndConstruct(const KeyT &Key) {
     BucketT *TheBucket;
     if (LookupBucketFor(Key, TheBucket))
@@ -379,6 +409,7 @@ public:
 protected:
   DenseMapBase() = default;
 
+//    销毁哈希表中的所有元素。
   void destroyAll() {
     if (getNumBuckets() == 0) // Nothing to do.
       return;
@@ -392,6 +423,7 @@ protected:
     }
   }
 
+//    初始化哈希表为空状态。
   void initEmpty() {
     setNumEntries(0);
     setNumTombstones(0);
@@ -414,6 +446,7 @@ protected:
     return NextPowerOf2(NumEntries * 4 / 3 + 1);
   }
 
+//     从旧的buckets中火数据、？ 这个是干嘛的？
   void moveFromOldBuckets(BucketT *OldBucketsBegin, BucketT *OldBucketsEnd) {
     initEmpty();
 
@@ -442,6 +475,7 @@ protected:
     }
   }
 
+//     拷贝方法
   template <typename OtherBaseT>
   void copyFrom(
       const DenseMapBase<OtherBaseT, KeyT, ValueT, ValueInfoT, KeyInfoT, BucketT> &other) {
@@ -466,6 +500,7 @@ protected:
       }
   }
 
+//     哈希值
   static unsigned getHashValue(const KeyT &Val) {
     return KeyInfoT::getHashValue(Val);
   }
@@ -475,12 +510,14 @@ protected:
     return KeyInfoT::getHashValue(Val);
   }
 
+//    空key
   static const KeyT getEmptyKey() {
     static_assert(std::is_base_of<DenseMapBase, DerivedT>::value,
                   "Must pass the derived type to this template!");
     return KeyInfoT::getEmptyKey();
   }
 
+//     僵尸key
   static const KeyT getTombstoneKey() {
     return KeyInfoT::getTombstoneKey();
   }
@@ -576,6 +613,7 @@ private:
     return TheBucket;
   }
 
+//     插入
   template <typename LookupKeyT>
   BucketT *InsertIntoBucketImpl(const KeyT &Key, const LookupKeyT &Lookup,
                                 BucketT *TheBucket) {
@@ -619,7 +657,8 @@ private:
 
     return TheBucket;
   }
-
+    
+// 似乎是错误的
   __attribute__((noinline, noreturn, cold))
   void FatalCorruptHashTables(const BucketT *BucketsPtr, unsigned NumBuckets) const
   {
@@ -637,6 +676,7 @@ private:
   /// FoundBucket.  If the bucket contains the key and a value, this returns
   /// true, otherwise it returns a bucket with an empty marker or tombstone and
   /// returns false.
+//  查找bucket的内容
   template<typename LookupKeyT>
   bool LookupBucketFor(const LookupKeyT &Val,
                        const BucketT *&FoundBucket) const {
@@ -719,6 +759,7 @@ public:
 /// is also in RHS, and that no additional pairs are in RHS.
 /// Equivalent to N calls to RHS.find and N value comparisons. Amortized
 /// complexity is linear, worst case is O(N^2) (if every hash collides).
+/// 相等的内容
 template <typename DerivedT, typename KeyT, typename ValueT,
           typename ValueInfoT, typename KeyInfoT, typename BucketT>
 bool operator==(
@@ -739,6 +780,7 @@ bool operator==(
 /// Inequality comparison for DenseMap.
 ///
 /// Equivalent to !(LHS == RHS). See operator== for performance notes.
+///  不等的内容
 template <typename DerivedT, typename KeyT, typename ValueT,
           typename ValueInfoT, typename KeyInfoT, typename BucketT>
 bool operator!=(
@@ -747,6 +789,8 @@ bool operator!=(
   return !(LHS == RHS);
 }
 
+// DenseMap 类，继承了base的类，
+//因为还有一个small的类型，
 template <typename KeyT, typename ValueT,
           typename ValueInfoT = DenseMapValueInfo<ValueT>,
           typename KeyInfoT = DenseMapInfo<KeyT>,
@@ -759,6 +803,7 @@ class DenseMap : public DenseMapBase<DenseMap<KeyT, ValueT, ValueInfoT, KeyInfoT
   // simplicity of referring to them.
   using BaseT = DenseMapBase<DenseMap, KeyT, ValueT, ValueInfoT, KeyInfoT, BucketT>;
 
+// BucketT 其实就是一个key/valu的类型，可能还有其他的类型，如果是set可能就是一个值的类型
   BucketT *Buckets;
   unsigned NumEntries;
   unsigned NumTombstones;
@@ -837,6 +882,7 @@ public:
     }
   }
 
+//  增长函数，增长了多少以及。。
   void grow(unsigned AtLeast) {
     unsigned OldNumBuckets = NumBuckets;
     BucketT *OldBuckets = Buckets;
@@ -854,6 +900,7 @@ public:
     operator delete(OldBuckets);
   }
 
+// 缩小了多少，以及清空
   void shrink_and_clear() {
     unsigned OldNumEntries = NumEntries;
     this->destroyAll();
@@ -908,6 +955,7 @@ private:
   }
 };
 
+// 小的稠密的Map
 template <typename KeyT, typename ValueT, unsigned InlineBuckets = 4,
           typename ValueInfoT = DenseMapValueInfo<ValueT>,
           typename KeyInfoT = DenseMapInfo<KeyT>,
@@ -1217,6 +1265,7 @@ private:
   }
 };
 
+// 类外： 独立的迭代器
 template <typename KeyT, typename ValueT, typename ValueInfoT,
           typename KeyInfoT, typename Bucket, bool IsConst>
 class DenseMapIterator {

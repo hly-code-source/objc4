@@ -21,6 +21,14 @@
 
 namespace objc {
 
+// 模板特化DenseMapInfo
+// DenseMapInfo 是关于DenseMap的信息
+// 主要试下的就是几个函数
+// 为什么需要模板泛化和模板特化？
+// 泛化： 处理通用的抒情
+// 特化：处理针对性的事情
+
+
 template<typename T>
 struct DenseMapInfo {
   //static inline T getEmptyKey();
@@ -214,3 +222,6 @@ struct DenseMapValueInfo {
 } // end namespace objc
 
 #endif
+
+// C++ 中为什么可以定义这么多种的末班结构体呢？
+// 不同的语言对常量的定义
